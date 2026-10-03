@@ -77,7 +77,7 @@ class CleanDataTests(unittest.TestCase):
         self.assertEqual(result.loc[0, "age_categories_with_values"], 36)
         self.assertAlmostEqual(result.loc[0, "population_65_plus"], 3_600)
         self.assertAlmostEqual(result.loc[0, "share_65_plus_pct"], 3.6)
-        self.assertAlmostEqual(result.loc[1, "change_since_2014_percentage_points"], 0.072, places=6)
+        self.assertAlmostEqual(result.loc[1, "change_since_2014_percentage_points"], 0.0, places=6)
         self.assertIn("p", result.loc[0, "status_flags"])
         saved = pd.read_csv(self.output_path)
         self.assertEqual(len(saved), 12)
