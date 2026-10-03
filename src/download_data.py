@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Download and validate the compressed Eurostat demo_r_d2jan TSV.
+"""Download and validate Eurostat's regional population-structure indicators.
 
 Run from the repository root:
-    python src/download_data.py
+    py src/download_data.py
 
-Raw source data and its local metadata sidecar are written under data/raw/.
-They are intentionally ignored by Git; the script and source URL are versioned.
+Downloads the compressed TSV for demo_r_pjanind2. Local raw data and metadata
+are written under data/raw/ and intentionally excluded from Git.
 """
 
 from __future__ import annotations
@@ -24,116 +24,77 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-DATASET = "demo_r_d2jan"
+DATASET = "demo_r_pjanind2"
 URL = (
     "https://ec.europa.eu/eurostat/api/dissemination/sdmx/2.1/data/"
     f"{DATASET}?format=TSV&compressed=true"
 )
-EXPECTED_DIMENSIONS = {"freq", "unit", "sex", "age", "geo"}
+EXPECTED_DIMENSIONS = {"freq", "indic_de", "unit", "geo"}
 
 
 def make_session() -> requests.Session:
     retry = Retry(
-        total=5,
-        connect=5,
-        read=5,
-        status=5,
-        backoff_factor=1.0,
+        total=5, connect=5, read=5, status=5, backoff_factor=1.0,
         status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset({"GET"}),
-        respect_retry_after_header=True,
+        allowed_methods=frozenset({"GET"}), respect_retry_after_header=True,
     )
     adapter = HTTPAdapter(max_retries=retry)
     session = requests.Session()
     session.mount("https://", adapter)
-    session.headers.update(
-        {"User-Agent": "germany-population-aging-portfolio/1.0 (reproducible research)"}
-    )
+    session.headers.update({"User-Agent": "germany-population-aging-portfolio/1.0"})
     return session
 
 
 def inspect_gzip_tsv(path: Path) -> tuple[str, list[str]]:
-    """Check gzip integrity and return the decoded header and normalized years."""
     with gzip.open(path, "rt", encoding="utf-8-sig", newline="") as source:
-        header_line = source.readline().rstrip("\r\n")
-
-    if not header_line:
-        raise ValueError("The downloaded TSV is empty or has no header.")
-
-    columns = header_line.split("\t")
-    series_key = columns[0].strip()
-    if "\\" not in series_key:
-        raise ValueError(f"Unexpected first TSV header field: {series_key!r}")
-
-    dimension_text = series_key.split("\\", 1)[0]
-    dimensions = set(dimension_text.split(","))
+        header = source.readline().rstrip("\r\n")
+    if not header:
+        raise ValueError("Downloaded TSV is empty or has no header.")
+    columns = header.split("\t")
+    if "\\" not in columns[0]:
+        raise ValueError(f"Unexpected Eurostat key header: {columns[0]!r}")
+    dimensions = set(columns[0].split("\\", 1)[0].split(","))
     if dimensions != EXPECTED_DIMENSIONS:
-        raise ValueError(
-            "Unexpected dataset dimensions in header. "
-            f"Expected {sorted(EXPECTED_DIMENSIONS)}, got {sorted(dimensions)}."
-        )
-
-    # Eurostat TSV uses spaces to separate observation values from status flags;
-    # some downloads therefore have trailing whitespace in period header cells.
+        raise ValueError(f"Expected dimensions {sorted(EXPECTED_DIMENSIONS)}, got {sorted(dimensions)}")
     periods = [column.strip() for column in columns[1:]]
-    valid_years = [period for period in periods if re.fullmatch(r"\d{4}", period)]
-    if not valid_years:
-        sample = [repr(period) for period in columns[1:6]]
-        raise ValueError(
-            "No annual YYYY time columns were found in the TSV header after "
-            f"trimming whitespace. Header sample: {sample}"
-        )
-
-    return header_line, periods
+    if not any(re.fullmatch(r"\d{4}", period) for period in periods):
+        raise ValueError(f"No annual year columns found. Header sample: {columns[:6]!r}")
+    return header, periods
 
 
 def download(output_dir: Path, force: bool = False) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     data_path = output_dir / f"{DATASET}.tsv.gz"
     metadata_path = output_dir / f"{DATASET}.metadata.json"
-
     if data_path.exists() and not force:
-        raise FileExistsError(
-            f"{data_path} already exists. Use --force to download and replace it."
-        )
+        raise FileExistsError(f"{data_path} already exists. Use --force to replace it.")
 
-    sha256 = hashlib.sha256()
-    response_headers: dict[str, str | None] = {}
-
+    digest = hashlib.sha256()
     with make_session() as session:
         with session.get(URL, stream=True, timeout=(20, 180)) as response:
             response.raise_for_status()
-            response_headers = {
-                "content_type": response.headers.get("Content-Type"),
-                "last_modified": response.headers.get("Last-Modified"),
-                "etag": response.headers.get("ETag"),
-            }
-
-            with tempfile.NamedTemporaryFile(
-                mode="wb", dir=output_dir, prefix=f".{DATASET}.", suffix=".part", delete=False
-            ) as temporary:
-                temp_path = Path(temporary.name)
+            headers = {key: response.headers.get(key) for key in ("Content-Type", "Last-Modified", "ETag")}
+            with tempfile.NamedTemporaryFile(mode="wb", dir=output_dir, prefix=f".{DATASET}.", suffix=".part", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
                 try:
                     for chunk in response.iter_content(chunk_size=1024 * 1024):
                         if chunk:
-                            temporary.write(chunk)
-                            sha256.update(chunk)
-                    temporary.flush()
+                            tmp.write(chunk)
+                            digest.update(chunk)
+                    tmp.flush()
                 except Exception:
-                    temp_path.unlink(missing_ok=True)
+                    tmp_path.unlink(missing_ok=True)
                     raise
 
     try:
-        with temp_path.open("rb") as downloaded:
-            if downloaded.read(2) != b"\x1f\x8b":
-                raise ValueError(
-                    "Response is not a gzip file. Check the Eurostat URL/API response."
-                )
-        header, periods = inspect_gzip_tsv(temp_path)
-        byte_count = temp_path.stat().st_size
-        temp_path.replace(data_path)
+        with tmp_path.open("rb") as stream:
+            if stream.read(2) != b"\x1f\x8b":
+                raise ValueError("Eurostat response is not gzip. Check the API response.")
+        header, periods = inspect_gzip_tsv(tmp_path)
+        size = tmp_path.stat().st_size
+        tmp_path.replace(data_path)
     except Exception:
-        temp_path.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
         raise
 
     years = [int(period) for period in periods if re.fullmatch(r"\d{4}", period)]
@@ -142,9 +103,9 @@ def download(output_dir: Path, force: bool = False) -> tuple[Path, Path]:
         "source_url": URL,
         "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
         "file": data_path.name,
-        "bytes": byte_count,
-        "sha256": sha256.hexdigest(),
-        "response_headers": response_headers,
+        "bytes": size,
+        "sha256": digest.hexdigest(),
+        "response_headers": headers,
         "header": header,
         "period_columns": periods,
         "first_year": min(years),
@@ -156,25 +117,17 @@ def download(output_dir: Path, force: bool = False) -> tuple[Path, Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--output-dir", type=Path, default=Path("data/raw"),
-        help="directory for the compressed TSV and metadata (default: data/raw)",
-    )
-    parser.add_argument(
-        "--force", action="store_true",
-        help="replace an existing download",
-    )
+    parser.add_argument("--output-dir", type=Path, default=Path("data/raw"))
+    parser.add_argument("--force", action="store_true", help="replace an existing download")
     args = parser.parse_args()
-
     try:
         data_path, metadata_path = download(args.output_dir, force=args.force)
     except (requests.RequestException, OSError, ValueError) as error:
         print(f"Download failed: {error}", file=sys.stderr)
         return 1
-
     print(f"Saved data:     {data_path}")
     print(f"Saved metadata: {metadata_path}")
-    print("Gzip integrity and Eurostat TSV header checks passed.")
+    print("Gzip integrity and Eurostat TSV dimension checks passed.")
     return 0
 
 

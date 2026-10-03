@@ -1,21 +1,29 @@
 # Data
 
-Source: Eurostat `demo_r_d2jan`, [dataset page](https://ec.europa.eu/eurostat/databrowser/view/demo_r_d2jan/default/table?lang=en).
+## Official measure
+
+Use Eurostat dataset [`demo_r_pjanind2`](https://ec.europa.eu/eurostat/databrowser/product/view/demo_r_pjanind2), *Population structure indicators by NUTS 2 region*. The project measure is indicator `PC_Y65_MAX`, labelled **Proportion of population aged 65 years and more**, in unit `PC` (percentage). This is a published proportion, not a count; do not divide it by population total or sum individual ages.
+
+Eurostat also reports its NUTS 2 structure indicators via [the dataset API](https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/demo_r_pjanind2?lang=EN). Dataset dimensions are annual frequency, demographic indicator, unit, geography, and time. Source can be revised; downloader metadata stores retrieval time and checksum.
 
 ## Reproducible download
 
-From the repository root, install dependencies and run:
+From the repository root:
 
-```bash
-python -m pip install -r requirements.txt
-python src/download_data.py
+```powershell
+py -m pip install -r requirements.txt
+py src/download_data.py
 ```
 
-The script downloads the compressed TSV to `data/raw/demo_r_d2jan.tsv.gz`, checks the gzip file and Eurostat TSV header, and writes a local metadata sidecar with retrieval time, source URL, response headers, time columns, file size, and SHA-256 checksum. Raw data and metadata are ignored by Git. To deliberately replace an existing download, run `python src/download_data.py --force`.
+This saves `data/raw/demo_r_pjanind2.tsv.gz` and a local metadata JSON sidecar. Raw files are ignored by Git. Use `py src/download_data.py --force` to replace an existing download. The script validates gzip integrity, expected dataset dimensions, and annual columns.
 
-The downloader does not filter or clean observations. It retrieves the full current dataset so later analysis can apply explicit, auditable filters. The source may be revised by Eurostat; record the retrieval timestamp and checksum when reproducing results.
+## Inspect and clean
 
-- [Dataset page](https://ec.europa.eu/eurostat/databrowser/view/demo_r_d2jan/default/table?lang=en)
-- [Eurostat SDMX 2.1 API documentation](https://ec.europa.eu/eurostat/web/user-guides/data-browser/api-data-access/api-detailed-guidelines/sdmx2-1/data-query)
+```powershell
+py src/inspect_data.py
+py src/clean_data.py
+```
 
-Before analysis, inspect the TSV header and dataset dimensions. Confirm the exact codes for Germany NUTS 2 geographies, total sex, total population, and population aged 65+. Check units and observation flags. Do not assume category codes without checking Eurostat's data structure and codelists.
+The audit prints available indicator and unit codes and checks German NUTS 2 coverage. The cleaner filters annual data, `PC_Y65_MAX`, unit `PC`, and Germany's four-character NUTS 2 codes; it preserves observation flags and outputs the published share plus percentage-point change since 2014. It does not impute missing values.
+
+Output: `data/processed/germany_nuts2_population_aging_2014_2025.csv`. Record the retrieval date and checksum when reproducing results.

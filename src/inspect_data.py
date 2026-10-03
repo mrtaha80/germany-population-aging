@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Audit a downloaded Eurostat demo_r_d2jan TSV without changing it.
+"""Inspect Eurostat regional indicator data and the selected 65+ measure.
 
 Run from the repository root after downloading:
-    python src/inspect_data.py
-
-The report reveals real dimension codes, geography levels, and completeness of
-the older-age categories used for the 65+ metric before cleaning.
+    py src/inspect_data.py
 """
 
 from __future__ import annotations
@@ -18,22 +15,19 @@ from pathlib import Path
 
 import pandas as pd
 
-DEFAULT_FILE = Path("data/raw/demo_r_d2jan.tsv.gz")
-DIMENSIONS = ["freq", "unit", "sex", "age", "geo"]
-YEARS_TO_AUDIT = [str(year) for year in range(2014, 2026)]
-OLD_AGE_CODES = {*(f"Y{age}" for age in range(65, 100)), "Y_OPEN"}
-NUMERIC_OBSERVATION = re.compile(r"^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:\s+.*)?\s*$")
+DEFAULT_FILE = Path("data/raw/demo_r_pjanind2.tsv.gz")
+DIMENSIONS = ["freq", "indic_de", "unit", "geo"]
+YEARS = [str(year) for year in range(2014, 2026)]
+INDICATOR = "PC_Y65_MAX"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", nargs="?", type=Path, default=DEFAULT_FILE)
     args = parser.parse_args()
-
     if not args.path.exists():
-        print(f"File not found: {args.path}\nRun python src/download_data.py first.", file=sys.stderr)
+        print(f"File not found: {args.path}\nRun py src/download_data.py first.", file=sys.stderr)
         return 1
-
     try:
         with gzip.open(args.path, "rt", encoding="utf-8-sig", newline="") as source:
             frame = pd.read_csv(source, sep="\t", dtype="string", low_memory=False)
@@ -43,78 +37,39 @@ def main() -> int:
 
     frame.columns = [str(column).strip() for column in frame.columns]
     key_column = frame.columns[0]
-    key_parts = frame[key_column].fillna("").str.split(",", expand=True)
-
-    if key_parts.shape[1] != len(DIMENSIONS):
-        print(
-            f"Expected {len(DIMENSIONS)} comma-separated key dimensions, "
-            f"found {key_parts.shape[1]} in {key_column!r}.",
-            file=sys.stderr,
-        )
-        print("First key values:", frame[key_column].head(5).tolist(), file=sys.stderr)
+    parts = frame[key_column].fillna("").str.split(",", expand=True)
+    if parts.shape[1] != len(DIMENSIONS):
+        print(f"Expected dimensions {DIMENSIONS}; found {parts.shape[1]} in {key_column!r}", file=sys.stderr)
         return 1
-
-    key_parts.columns = DIMENSIONS
-    data = pd.concat([key_parts, frame.iloc[:, 1:]], axis=1)
+    parts.columns = DIMENSIONS
+    data = pd.concat([parts, frame.iloc[:, 1:]], axis=1)
     year_columns = [column for column in frame.columns[1:] if column.isdigit()]
-
     print(f"File: {args.path}")
-    print(f"Rows (time series): {len(data):,}")
-    print(f"Dimension key column: {key_column}")
-    print(f"Year columns: {year_columns[0]}–{year_columns[-1]} ({len(year_columns)} years)" if year_columns else "Year columns: none detected")
-    print("\nDistinct dimension codes:")
+    print(f"Time series: {len(data):,}; coverage: {year_columns[0]}–{year_columns[-1]}" if year_columns else f"Time series: {len(data):,}; no annual columns found")
     for dimension in DIMENSIONS:
-        values = sorted(data[dimension].dropna().unique().tolist())
-        print(f"  {dimension}: {values[:80]}" + (" ..." if len(values) > 80 else ""))
+        codes = sorted(data[dimension].dropna().unique().tolist())
+        print(f"{dimension}: {codes[:100]}" + (" ..." if len(codes) > 100 else ""))
 
-    germany = data[data["geo"].fillna("").str.startswith("DE")]
-    print("\nGerman geography codes by code length:")
-    for length, group in germany.groupby(germany["geo"].str.len()):
-        codes = sorted(group["geo"].dropna().unique().tolist())
-        print(f"  {length} characters: {len(codes)} codes, sample={codes[:40]}")
-
-    nuts2 = germany[germany["geo"].str.fullmatch(r"DE[A-Z0-9]{2}", na=False)]
-    print(f"\nGerman NUTS-2-shaped series: {len(nuts2):,}")
-    for dimension in ["freq", "unit", "sex", "age"]:
-        print(f"  {dimension}: {sorted(nuts2[dimension].dropna().unique().tolist())}")
-
-    print("\nSample German NUTS 2 keys:")
-    print(nuts2[DIMENSIONS].drop_duplicates().head(12).to_string(index=False))
-
-    available_years = [year for year in YEARS_TO_AUDIT if year in data.columns]
-    old_age = nuts2[
-        nuts2["freq"].eq("A")
-        & nuts2["unit"].eq("NR")
-        & nuts2["sex"].eq("T")
-        & nuts2["age"].isin(OLD_AGE_CODES)
-    ].copy()
-    if available_years:
-        long = old_age.melt(
-            id_vars=["geo", "age"],
-            value_vars=available_years,
-            var_name="year",
-            value_name="raw_value",
-        )
-        has_number = long["raw_value"].fillna("").str.match(NUMERIC_OBSERVATION)
-        audit = long.assign(has_number=has_number).groupby("age").agg(
-            region_years=("geo", "size"),
-            numeric_observations=("has_number", "sum"),
-        )
-        audit["missing_observations"] = audit["region_years"] - audit["numeric_observations"]
-        audit = audit.sort_index(key=lambda index: index.map(
-            lambda age: 100 if age == "Y_OPEN" else int(age[1:]) if age.startswith("Y") and age[1:].isdigit() else -1
-        ))
-        expected = nuts2["geo"].nunique() * len(available_years)
-        print(f"\n65+ source-category completeness for {available_years[0]}–{available_years[-1]} (expected {expected} rows per age code):")
-        print(audit.to_string())
-        missing = audit[audit["numeric_observations"].lt(expected)]
-        if missing.empty:
-            print("All 36 selected age categories have numeric observations for every region-year.")
-        else:
-            print("Age codes with one or more non-numeric/missing observations:", ", ".join(missing.index.tolist()))
-            print("Inspect the Eurostat status flags before deciding whether a partial 65+ sum is valid.")
-
-    print("\nNo observations have been filtered, transformed, or saved by this audit.")
+    german = data[data.geo.fillna("").str.fullmatch(r"DE[A-Z0-9]{2}", na=False)]
+    selected = german[
+        german.freq.eq("A") & german.indic_de.eq(INDICATOR) & german.unit.eq("PC")
+    ]
+    if selected.empty:
+        print(f"No German NUTS 2 rows found for {INDICATOR} / unit PC; inspect codes above.")
+        return 0
+    years = [year for year in YEARS if year in data.columns]
+    if years:
+        long = selected.melt(id_vars=["geo"], value_vars=years, var_name="year", value_name="raw_value")
+        numeric = pd.to_numeric(long.raw_value.str.extract(r"^\s*([+-]?[\d.]+)")[0], errors="coerce")
+        long["numeric_value"] = numeric
+        coverage = long.groupby("year").numeric_value.agg(total="size", present="count")
+        coverage["missing"] = coverage.total - coverage.present
+        print(f"\n{INDICATOR} coverage by year (German NUTS 2; unit=PC):")
+        print(coverage.to_string())
+        print("\nExample values:")
+        print(long[long.numeric_value.notna()].head(8).to_string(index=False))
+    print(f"\nSelected German NUTS 2 regions: {selected.geo.nunique()}")
+    print("Indicator meaning: proportion of population aged 65 years and over; reported in percent.")
     return 0
 
 
