@@ -44,8 +44,8 @@ class CleanDataTests(unittest.TestCase):
         rows = []
         for geo, start in [("DE11", 21.0), ("DE12", 22.0)]:
             observations = []
-            for i, _year in enumerate(years):
-                if missing_2024 and _year == "2024":
+            for i, year in enumerate(years):
+                if missing_2024 and year == "2024":
                     observations.append(": u")
                 else:
                     observations.append(f"{start + i / 10:.1f}" + (" p" if i == 0 else ""))
@@ -55,7 +55,7 @@ class CleanDataTests(unittest.TestCase):
         rows.append(["A,PC_Y65_MAX,PC,DE1", *["23.0" for _ in years]])
         rows.append(["A,PC_Y65_MAX,YR,DE11", *["23.0" for _ in years]])
         with gzip.open(self.source, "wt", encoding="utf-8", newline="") as stream:
-            writer = csv.writer(stream, delimiter="\\t", lineterminator="\\n")
+            writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
             writer.writerow(header)
             writer.writerows(rows)
 
