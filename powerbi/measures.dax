@@ -1,0 +1,18 @@
+// Import CSV as table Ageing. In Power Query, select region/year columns and use Unpivot Other Columns to turn the year columns into Year and Share fields.
+// Set Share to Decimal Number. Eurostat values are already percentages.
+
+Latest year = MAX(Ageing[Year])
+
+Selected 65+ share = AVERAGE(Ageing[Share])
+
+Latest 65+ share =
+VAR Y = [Latest year]
+RETURN CALCULATE(AVERAGE(Ageing[Share]), Ageing[Year] = Y)
+
+Change since 2014 (pp) =
+VAR CurrentYear = MAX(Ageing[Year])
+VAR CurrentShare = CALCULATE(AVERAGE(Ageing[Share]), Ageing[Year] = CurrentYear)
+VAR BaseShare = CALCULATE(AVERAGE(Ageing[Share]), Ageing[Year] = 2014)
+RETURN CurrentShare - BaseShare
+
+Regional median share = MEDIAN(Ageing[Share])

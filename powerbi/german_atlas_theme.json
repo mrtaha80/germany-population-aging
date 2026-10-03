@@ -1,0 +1,7 @@
+{
+  "name": "German Atlas",
+  "dataColors": ["#C74432", "#335E57", "#D39A45", "#6F8290", "#B6C0B6", "#7F5545", "#556B2F"],
+  "background": "#F5F2EA",
+  "foreground": "#252925",
+  "tableAccent": "#C74432"
+}

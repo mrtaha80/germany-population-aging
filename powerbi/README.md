@@ -1,9 +1,10 @@
-# Power BI
+# Power BI deliverables
 
-Planned dashboard pages:
+## Dashboard
+An interactive dashboard preview is available in ClickUp: [German regional ageing dashboard](https://app.clickup.com/90122145635/artifact/2kxv5kv3-572?version=1).
 
-1. **Overview:** 65+ share by year and selected German region.
-2. **Regional comparison:** latest complete-year 65+ share by NUTS 2 region.
-3. **Change since 2014:** percentage-point change, with definitions and caveats.
+## Build in Power BI Desktop
+Use `germany_nuts2_ageing_powerbi.csv` as the source. In Power Query, keep `geo` and `region_name`, then unpivot all year columns into `Year` and `Share`. Apply `german_atlas_theme.json`, then add measures from `measures.dax`. Follow `PowerBI_build_guide.md` for layout and settings. This repository does not yet contain a native `.pbix`; create and save it in Power BI Desktop after loading the files.
 
-Add the `.pbix` file and screenshots after building the dashboard. Check that filters and measures use consistent year, geography, sex, and unit selections.
+## Measure and caveat
+Eurostat `demo_r_pjanind2`, indicator `PC_Y65_MAX` (proportion of population aged 65 years and more), unit `PC` (percentage). The CSV covers 38 German NUTS 2 regions across 2014–2025. The 2023 observations carry the `b` flag (break in time series), which must be disclosed when interpreting trends. Regional averages are not population-weighted national estimates.
