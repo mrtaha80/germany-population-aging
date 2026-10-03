@@ -53,6 +53,7 @@ def read_source(path: Path) -> tuple[pd.DataFrame, list[str]]:
     key_col = wide.columns[0]
     parts = wide[key_col].fillna("").str.split(",", expand=True)
     if parts.shape[1] != len(KEY_DIMENSIONS):
+        
         raise ValueError(f"Expected 5 key dimensions; found {parts.shape[1]} in {key_col!r}")
     parts.columns = KEY_DIMENSIONS
 
