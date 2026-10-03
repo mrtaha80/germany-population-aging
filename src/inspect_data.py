@@ -4,14 +4,15 @@
 Run from the repository root after downloading:
     python src/inspect_data.py
 
-The report reveals real dimension codes and geography levels before any
-filtering or calculation is done.
+The report reveals real dimension codes, geography levels, and completeness of
+the older-age categories used for the 65+ metric before cleaning.
 """
 
 from __future__ import annotations
 
 import argparse
 import gzip
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,9 @@ import pandas as pd
 
 DEFAULT_FILE = Path("data/raw/demo_r_d2jan.tsv.gz")
 DIMENSIONS = ["freq", "unit", "sex", "age", "geo"]
+YEARS_TO_AUDIT = [str(year) for year in range(2014, 2026)]
+OLD_AGE_CODES = {*(f"Y{age}" for age in range(65, 100)), "Y_OPEN"}
+NUMERIC_OBSERVATION = re.compile(r"^\s*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?(?:\s+.*)?\s*$")
 
 
 def main() -> int:
@@ -76,6 +80,40 @@ def main() -> int:
 
     print("\nSample German NUTS 2 keys:")
     print(nuts2[DIMENSIONS].drop_duplicates().head(12).to_string(index=False))
+
+    available_years = [year for year in YEARS_TO_AUDIT if year in data.columns]
+    old_age = nuts2[
+        nuts2["freq"].eq("A")
+        & nuts2["unit"].eq("NR")
+        & nuts2["sex"].eq("T")
+        & nuts2["age"].isin(OLD_AGE_CODES)
+    ].copy()
+    if available_years:
+        long = old_age.melt(
+            id_vars=["geo", "age"],
+            value_vars=available_years,
+            var_name="year",
+            value_name="raw_value",
+        )
+        has_number = long["raw_value"].fillna("").str.match(NUMERIC_OBSERVATION)
+        audit = long.assign(has_number=has_number).groupby("age").agg(
+            region_years=("geo", "size"),
+            numeric_observations=("has_number", "sum"),
+        )
+        audit["missing_observations"] = audit["region_years"] - audit["numeric_observations"]
+        audit = audit.sort_index(key=lambda index: index.map(
+            lambda age: 100 if age == "Y_OPEN" else int(age[1:]) if age.startswith("Y") and age[1:].isdigit() else -1
+        ))
+        expected = nuts2["geo"].nunique() * len(available_years)
+        print(f"\n65+ source-category completeness for {available_years[0]}–{available_years[-1]} (expected {expected} rows per age code):")
+        print(audit.to_string())
+        missing = audit[audit["numeric_observations"].lt(expected)]
+        if missing.empty:
+            print("All 36 selected age categories have numeric observations for every region-year.")
+        else:
+            print("Age codes with one or more non-numeric/missing observations:", ", ".join(missing.index.tolist()))
+            print("Inspect the Eurostat status flags before deciding whether a partial 65+ sum is valid.")
+
     print("\nNo observations have been filtered, transformed, or saved by this audit.")
     return 0
 
