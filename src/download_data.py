@@ -53,7 +53,7 @@ def make_session() -> requests.Session:
 
 
 def inspect_gzip_tsv(path: Path) -> tuple[str, list[str]]:
-    """Check gzip integrity and return the decoded header and time columns."""
+    """Check gzip integrity and return the decoded header and normalized years."""
     with gzip.open(path, "rt", encoding="utf-8-sig", newline="") as source:
         header_line = source.readline().rstrip("\r\n")
 
@@ -61,7 +61,7 @@ def inspect_gzip_tsv(path: Path) -> tuple[str, list[str]]:
         raise ValueError("The downloaded TSV is empty or has no header.")
 
     columns = header_line.split("\t")
-    series_key = columns[0]
+    series_key = columns[0].strip()
     if "\\" not in series_key:
         raise ValueError(f"Unexpected first TSV header field: {series_key!r}")
 
@@ -73,9 +73,16 @@ def inspect_gzip_tsv(path: Path) -> tuple[str, list[str]]:
             f"Expected {sorted(EXPECTED_DIMENSIONS)}, got {sorted(dimensions)}."
         )
 
-    periods = columns[1:]
-    if not periods or not any(re.fullmatch(r"\d{4}", period) for period in periods):
-        raise ValueError("No annual YYYY time columns were found in the TSV header.")
+    # Eurostat TSV uses spaces to separate observation values from status flags;
+    # some downloads therefore have trailing whitespace in period header cells.
+    periods = [column.strip() for column in columns[1:]]
+    valid_years = [period for period in periods if re.fullmatch(r"\d{4}", period)]
+    if not valid_years:
+        sample = [repr(period) for period in columns[1:6]]
+        raise ValueError(
+            "No annual YYYY time columns were found in the TSV header after "
+            f"trimming whitespace. Header sample: {sample}"
+        )
 
     return header_line, periods
 
@@ -129,6 +136,7 @@ def download(output_dir: Path, force: bool = False) -> tuple[Path, Path]:
         temp_path.unlink(missing_ok=True)
         raise
 
+    years = [int(period) for period in periods if re.fullmatch(r"\d{4}", period)]
     metadata = {
         "dataset": DATASET,
         "source_url": URL,
@@ -139,8 +147,8 @@ def download(output_dir: Path, force: bool = False) -> tuple[Path, Path]:
         "response_headers": response_headers,
         "header": header,
         "period_columns": periods,
-        "first_year": min((int(p) for p in periods if re.fullmatch(r"\d{4}", p)), default=None),
-        "last_year": max((int(p) for p in periods if re.fullmatch(r"\d{4}", p)), default=None),
+        "first_year": min(years),
+        "last_year": max(years),
     }
     metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
     return data_path, metadata_path
