@@ -1,6 +1,8 @@
-# Local data files (downloaded from Eurostat; do not commit raw data)
+# Local data files (downloaded from Eurostat)
 data/raw/*
 !data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
 
 # Python
 __pycache__/
